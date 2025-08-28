@@ -1,48 +1,88 @@
-¡Perfecto, Enrique! Vamos a hacerlo solo con DAX y cumpliendo tus reglas:
-
-Si desaparece de un corte al siguiente ⇒ ATENDIDO entre esos dos cortes (aunque no tenga registro “concluido”).
-
-Si reaparece en un corte posterior ⇒ cuenta como NUEVO desde ese corte (no hereda el origen anterior).
-
-Concluidos directos (solo en la hoja Concluidos con Fecha_estado y nunca figuraron Pendientes) se asignan al corte según su Fecha_estado.
+¡Hecho, Enrique! Te dejo clic por clic dónde crear cada cosa en Power BI Desktop y cómo usarla. No tienes que volver a buscar respuestas anteriores.
 
 
-Asumo:
+---
 
-Tabla única: Hechos_Snapshot
+0) Preparación (una sola vez)
 
-Columnas: ExpedienteID, Estado (PENDIENTE / CONCLUIDO), Corte (fecha del corte), Fecha_estado (en los concluidos)
+0.1 Crea la dimensión de cortes (Dim_Corte)
 
-Tabla de cortes: Dim_Corte con columna Corte (relacionada 1–* con Hechos_Snapshot[Corte])
+1. Cinta superior → Modelado → Nueva tabla.
+
+
+2. Pega esto y Enter:
+
+
+
+Dim_Corte = DISTINCT( Hechos_Snapshot[Corte] )
+
+3. En el panel Campos, selecciona Dim_Corte[Corte] → en Propiedades pon Tipo de datos: Fecha.
+
+
+
+0.2 Relaciona Dim_Corte con Hechos_Snapshot
+
+1. Vista izquierda → icono Modelo.
+
+
+2. Arrastra Dim_Corte[Corte] → sobre Hechos_Snapshot[Corte].
+
+
+3. En el diálogo:
+
+Cardinalidad: Uno a varios (1:)*
+
+Dirección del filtro: Simple
+
+Activar la relación → Aceptar.
+
+
+
+
+0.3 (Opcional) Normaliza ESTADO
+
+Si hay variantes de escritura:
+
+1. Vista izquierda → icono Datos o en Modelado → Nueva columna dentro de Hechos_Snapshot:
+
+
+
+EstadoNorm = UPPER( Hechos_Snapshot[Estado] )
+
+2. Si la creas, usa "PENDIENTE"/"CONCLUIDO" en mayúsculas en todas las medidas.
+(Si ya viene limpio, puedes seguir usando [Estado]).
+
+
+
+0.4 Crea una tabla “Medidas” (para guardar todas las medidas juntas)
+
+1. Cinta Inicio → Ingresar datos.
+
+
+2. Nombre de la tabla: Medidas. Deja una columna vacía (o pon “Dummy” con 1 fila). → Cargar.
+
+
+3. (Opcional) Borra la columna Dummy luego. Ahora todas las nuevas medidas las crearás seleccionando la tabla Medidas (quedarán allí ordenaditas).
+
 
 
 
 ---
 
-1) Utilidades: “corte anterior” dinámico
+1) Vista “Mes a mes” (Nuevos, Arrastrados, Atendidos, Concluidos directos)
 
-Usaremos siempre “el corte anterior real” (tus cortes no son fijos).
-
-Corte Anterior :=
-VAR CorteActual = MAX ( Dim_Corte[Corte] )
-RETURN
-CALCULATE (
-    MAX ( Dim_Corte[Corte] ),
-    FILTER ( ALL ( Dim_Corte ), Dim_Corte[Corte] < CorteActual )
-)
-
-> No es una medida que muestres; solo te sirve como patrón dentro de otras medidas (copiamos la lógica CorteAnterior como variable).
+> Importante: Antes de crear cada medida, haz clic en la tabla Medidas (en el panel Campos). Así las medidas quedarán agrupadas ahí.
 
 
 
+1.1 Medidas DAX
 
----
+Pendientes NUEVOS (corte)
 
-2) Vista “MES A MES” (evolución entre dos cortes consecutivos)
+1. Modelado → Nueva medida.
 
-2.1 Pendientes NUEVOS del corte (incluye reapariciones)
 
-> Pendiente en el corte actual y NO estaba pendiente en el corte anterior.
+2. Pega:
 
 
 
@@ -65,9 +105,12 @@ CALCULATE (
     )
 )
 
-2.2 Pendientes ARRASTRADOS en el corte
+Pendientes ARRASTRADOS (corte)
 
-> Pendiente en el corte actual y SÍ estaba pendiente en el corte anterior.
+1. Modelado → Nueva medida.
+
+
+2. Pega:
 
 
 
@@ -88,9 +131,12 @@ CALCULATE (
     ) > 0
 )
 
-2.3 ATENDIDOS entre cortes
+ATENDIDOS (del anterior al actual)
 
-> Pendiente en el corte anterior y ya no aparece como pendiente en el actual ⇒ atendido entre ambos.
+1. Modelado → Nueva medida.
+
+
+2. Pega:
 
 
 
@@ -118,9 +164,12 @@ CALCULATE (
     )
 )
 
-2.4 Concluidos directos en el corte (nunca fueron pendientes)
+Concluidos DIRECTOS (por fecha estado)
 
-> Expedientes que jamás aparecen como Pendientes y cuya primera Fecha_estado cae entre el corte anterior y el actual.
+1. Modelado → Nueva medida.
+
+
+2. Pega:
 
 
 
@@ -129,87 +178,49 @@ VAR CorteActual   = MAX ( Dim_Corte[Corte] )
 VAR CorteAnterior =
     CALCULATE ( MAX ( Dim_Corte[Corte] ),
         FILTER ( ALL ( Dim_Corte ), Dim_Corte[Corte] < CorteActual ) )
-VAR CorteAnteriorAjustado = COALESCE ( CorteAnterior, DATE ( 1900, 1, 1 ) )
+VAR CorteAnteriorAdj = COALESCE ( CorteAnterior, DATE ( 1900, 1, 1 ) )
+
+VAR ConcluByExp =
+    SUMMARIZE(
+        FILTER(
+            ALL(Hechos_Snapshot),
+            Hechos_Snapshot[Estado] = "CONCLUIDO"
+                && NOT ISBLANK(Hechos_Snapshot[Fecha_estado])
+        ),
+        Hechos_Snapshot[ExpedienteID],
+        "FirstFechaConclu", MIN(Hechos_Snapshot[Fecha_estado])
+    )
+
+VAR PendingIDs =
+    SUMMARIZE(
+        FILTER(ALL(Hechos_Snapshot), Hechos_Snapshot[Estado] = "PENDIENTE"),
+        Hechos_Snapshot[ExpedienteID]
+    )
+
+VAR DirectosEnCorte =
+    FILTER(
+        ConcluByExp,
+        [FirstFechaConclu] >  CorteAnteriorAdj
+            AND [FirstFechaConclu] <= CorteActual
+            AND NOT CONTAINS(
+                PendingIDs,
+                Hechos_Snapshot[ExpedienteID], Hechos_Snapshot[ExpedienteID]
+            )
+    )
 RETURN
-CALCULATE (
-    DISTINCTCOUNT ( Hechos_Snapshot[ExpedienteID] ),
-    -- Nunca fue PENDIENTE en ningún corte
-    CALCULATE (
-        COUNTROWS ( Hechos_Snapshot ),
-        ALLEXCEPT ( Hechos_Snapshot, Hechos_Snapshot[ExpedienteID] ),
-        Hechos_Snapshot[Estado] = "PENDIENTE"
-    ) = 0,
-    -- Tiene fecha de estado y cae en (anterior, actual]
-    NOT ISBLANK ( Hechos_Snapshot[Fecha_estado] ),
-    MIN ( Hechos_Snapshot[Fecha_estado] ) >  CorteAnteriorAjustado,
-    MIN ( Hechos_Snapshot[Fecha_estado] ) <= CorteActual
-)
+COUNTROWS( DirectosEnCorte )
 
-> Úsala en tarjetas o columnas apiladas junto a ATENDIDOS.
+1.2 Arma la página “Mes a Mes”
+
+1. Inserta un Segmentador → arrastra Dim_Corte[Corte].
+
+Formato del segmentador → Selección única: Activado.
+
+Ordena por fecha (descendente si quieres ver el último primero).
 
 
 
-
----
-
-3) Vista “ACUMULADA POR COHORTES” (origen vs cortes sucesivos)
-
-Definimos cohorte de origen como: expedientes pendientes en un corte y NO pendientes en el corte anterior (tu regla de “nuevo ciclo al reaparecer”).
-
-La matriz será:
-
-Filas: Dim_Corte[Corte] (corte origen de la cohorte)
-
-Columnas: Dim_Corte[Corte] (corte de seguimiento)
-
-Valores: medida de “pendientes de la cohorte en ese corte de seguimiento”
-
-
-Pendientes de COHORTE (fila → columna) :=
-VAR CorteFila =
-    SELECTEDVALUE ( Dim_Corte[Corte] )               -- cohorte origen (filas)
-VAR CorteCol  =
-    MAX ( Dim_Corte[Corte] )                         -- corte seguimiento (columnas)
-VAR CorteAnteriorFila =
-    CALCULATE ( MAX ( Dim_Corte[Corte] ),
-        FILTER ( ALL ( Dim_Corte ), Dim_Corte[Corte] < CorteFila ) )
-RETURN
-CALCULATE (
-    DISTINCTCOUNT ( Hechos_Snapshot[ExpedienteID] ),
-    -- (1) PERTENECE a la cohorte de CorteFila:
-    --    estuvo PENDIENTE en CorteFila…
-    CALCULATE (
-        COUNTROWS ( Hechos_Snapshot ),
-        Hechos_Snapshot[Estado] = "PENDIENTE",
-        Hechos_Snapshot[Corte]  = CorteFila
-    ) > 0
-    &&
-    --    …y NO estuvo PENDIENTE en el corte anterior a CorteFila
-    CALCULATE (
-        COUNTROWS ( Hechos_Snapshot ),
-        Hechos_Snapshot[Estado] = "PENDIENTE",
-        Hechos_Snapshot[Corte]  = CorteAnteriorFila
-    ) = 0,
-    -- (2) Y ESTÁ PENDIENTE en el corte de seguimiento (columna)
-    Hechos_Snapshot[Estado] = "PENDIENTE",
-    Hechos_Snapshot[Corte]  = CorteCol
-)
-
-> Esta medida llena la matriz de cohortes (filas = origen, columnas = seguimiento).
-Verás cómo cada cohorte se va “apagando” con el tiempo conforme los casos se atienden.
-
-
-
-
----
-
-4) Cómo usarlo en el informe
-
-Página 1 – Evolución mes a mes
-
-Segmentador: Dim_Corte[Corte] (selección única).
-
-Tarjetas:
+2. Inserta 4 Tarjetas (visual Card) y arrastra estas medidas:
 
 Pendientes NUEVOS (corte)
 
@@ -220,39 +231,104 @@ ATENDIDOS (del anterior al actual)
 Concluidos DIRECTOS (por fecha estado)
 
 
-Tabla detalle filtrada por el corte seleccionado (ExpedienteID, Especialista, Procedimiento, etc.)
 
-Gráfico columnas apiladas: Nuevos vs Arrastrados vs Atendidos.
+3. Inserta una Tabla de detalle: agrega columnas de Hechos_Snapshot (ExpedienteID, Especialistas, Procedimiento, etc.). El segmentador filtra todo.
 
-
-Página 2 – Cohortes acumuladas
-
-Matriz:
-
-Filas = Dim_Corte[Corte] (origen)
-
-Columnas = Dim_Corte[Corte] (seguimiento)
-
-Valores = Pendientes de COHORTE (fila → columna)
-
-
-(Opcional) Línea del tiempo con total pendientes por cohorte usando esta misma lógica.
 
 
 
 ---
 
-Notas finas
+2) Vista “Cohortes” (origen vs seguimiento)
 
-Si el primer corte no tiene “anterior”, las fórmulas ya contemplan CorteAnteriorAjustado para no fallar.
+2.1 Crea la tabla de columnas desconectada (Dim_Corte_Col)
 
-Asegúrate de que Dim_Corte[Corte] esté relacionada con Hechos_Snapshot[Corte].
+1. Modelado → Nueva tabla:
 
-Normaliza Estado (“PENDIENTE” / “CONCLUIDO”) para evitar diferencias por mayúsculas.
+
+
+Dim_Corte_Col = DISTINCT( Hechos_Snapshot[Corte] )
+
+2. No crees relación de Dim_Corte_Col con nadie (debe estar desconectada).
+
+
+
+2.2 Crea la medida de cohorte
+
+1. Selecciona la tabla Medidas → Nueva medida.
+
+
+2. Pega:
+
+
+
+Pendientes de COHORTE (fila → columna) :=
+VAR CorteFila = SELECTEDVALUE( Dim_Corte[Corte] )            -- origen (filas)
+VAR CorteAnteriorFila =
+    CALCULATE( MAX(Dim_Corte[Corte]),
+        FILTER( ALL(Dim_Corte), Dim_Corte[Corte] < CorteFila ) )
+VAR CorteCol = SELECTEDVALUE( Dim_Corte_Col[Corte] )          -- seguimiento (columnas)
+RETURN
+CALCULATE(
+    DISTINCTCOUNT( Hechos_Snapshot[ExpedienteID] ),
+
+    -- (1) PERTENECE a la cohorte del CorteFila:
+    CALCULATE(
+        COUNTROWS( Hechos_Snapshot ),
+        Hechos_Snapshot[Estado] = "PENDIENTE",
+        Hechos_Snapshot[Corte]  = CorteFila
+    ) > 0
+    &&
+    CALCULATE(
+        COUNTROWS( Hechos_Snapshot ),
+        Hechos_Snapshot[Estado] = "PENDIENTE",
+        Hechos_Snapshot[Corte]  = CorteAnteriorFila
+    ) = 0,
+
+    -- (2) Está PENDIENTE en el corte de seguimiento (columna):
+    Hechos_Snapshot[Estado] = "PENDIENTE",
+    TREATAS( VALUES(Dim_Corte_Col[Corte]), Hechos_Snapshot[Corte] )
+)
+
+2.3 Arma la página “Cohortes”
+
+1. Inserta un visual Matriz.
+
+
+2. Filas → arrastra Dim_Corte[Corte] (origen).
+
+
+3. Columnas → arrastra Dim_Corte_Col[Corte] (seguimiento).
+
+
+4. Valores → arrastra Pendientes de COHORTE (fila → columna).
+
+
+5. (Opcional) Formato condicional por color para ver cómo “se apaga” cada cohorte.
+
 
 
 
 ---
 
-Si quieres, te paso estas medidas en un bloque listo para copiar/pegar y te digo exactamente dónde crear cada una (todas en la tabla Hechos_Snapshot o en una tabla de medidas).
+3) Consejos rápidos
+
+Si tu Estado viene como “Pendiente/Concluido” en distintos casos, usa EstadoNorm y reemplaza en las medidas "PENDIENTE" por "PENDIENTE" sobre esa nueva columna.
+
+Si un corte es el primero, las medidas ya contemplan que no hay “anterior”.
+
+Si no te aparece el resultado esperado, verifica:
+
+La relación Dim_Corte → Hechos_Snapshot.
+
+Que el segmentador use Dim_Corte[Corte] (no el campo de Hechos).
+
+Que Corte esté en formato Fecha.
+
+
+
+
+---
+
+¿Quieres que te haga un mini checklist visual (capturas simuladas) de dónde está Nueva tabla, Nueva medida, Segmentador, Matriz y Tarjeta, para que lo ubiques en pantalla?
 
